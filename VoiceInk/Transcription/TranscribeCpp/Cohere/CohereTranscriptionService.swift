@@ -130,7 +130,8 @@ final class CohereTranscriptionService: TranscriptionService, @unchecked Sendabl
         logger.notice(
             "\(transcribeCppModel.displayName, privacy: .public) completed in \(startedAt.duration(to: .now).formatted(.units(allowed: [.seconds], width: .narrow)), privacy: .public) for \(samples.count, privacy: .public) samples"
         )
-        return TextNormalizer.shared.normalizeSentence(texts.joined(separator: languageUsesSpaces(language) ? " " : ""))
+        return texts.joined(separator: languageUsesSpaces(language) ? " " : "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func cleanup() {
