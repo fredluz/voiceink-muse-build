@@ -58,7 +58,7 @@ jobs:
             -derivedDataPath "$DERIVED_DATA" \
             -clonedSourcePackagesDirPath "$SOURCE_PACKAGES" \
             -xcconfig "$GITHUB_WORKSPACE/LocalBuild.xcconfig" \
-            -parallelizeTargets NO \
+            -jobs 1 \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
@@ -66,8 +66,9 @@ jobs:
             CODE_SIGN_ENTITLEMENTS="$GITHUB_WORKSPACE/VoiceInk/VoiceInk.local.entitlements" \
             ARCHS=arm64 \
             ONLY_ACTIVE_ARCH=YES \
-            SWIFT_COMPILATION_MODE=incremental \
+            SWIFT_COMPILATION_MODE=singlefile \
             SWIFT_MAXIMUM_NUMBER_OF_THREADS=1 \
+            -resultBundlePath "$RUNNER_TEMP/VoiceInk.xcresult" \
             build
 
           app_path="$DERIVED_DATA/Build/Products/Release/VoiceInk.app"
@@ -83,4 +84,14 @@ jobs:
           name: VoiceInk-macos-unsigned
           path: ${{ runner.temp }}/package/VoiceInk.app.zip
           if-no-files-found: error
+          retention-days: 1
+      - name: Upload build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoiceInk-build-diagnostics
+          path: |
+            ${{ runner.temp }}/VoiceInk.xcresult
+            ${{ runner.temp }}/VoiceInkDerivedData/Logs
+          if-no-files-found: warn
           retention-days: 1
