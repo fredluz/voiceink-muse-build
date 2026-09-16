@@ -8,6 +8,7 @@ struct MiniRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     let onCloseTapped: () -> Void
     let onCancelTapped: () -> Void
     let onAssistantFollowUp: (String) -> Void
+    private let showLiveTranscript = true
 
     private let controlBarHeight: CGFloat = 40
     private let compactWidth: CGFloat = 184
