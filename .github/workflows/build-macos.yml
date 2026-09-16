@@ -58,7 +58,7 @@ jobs:
             -derivedDataPath "$DERIVED_DATA" \
             -clonedSourcePackagesDirPath "$SOURCE_PACKAGES" \
             -xcconfig "$GITHUB_WORKSPACE/LocalBuild.xcconfig" \
-            -disableAutomaticPackageResolution \
+            -parallelizeTargets NO \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
@@ -66,6 +66,8 @@ jobs:
             CODE_SIGN_ENTITLEMENTS="$GITHUB_WORKSPACE/VoiceInk/VoiceInk.local.entitlements" \
             ARCHS=arm64 \
             ONLY_ACTIVE_ARCH=YES \
+            SWIFT_COMPILATION_MODE=incremental \
+            SWIFT_MAXIMUM_NUMBER_OF_THREADS=1 \
             build
 
           app_path="$DERIVED_DATA/Build/Products/Release/VoiceInk.app"
