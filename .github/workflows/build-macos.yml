@@ -1,0 +1,84 @@
+name: Build VoiceInk macOS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build VoiceInk.app
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+
+    steps:
+      - name: Check out snapshot
+        uses: actions/checkout@v4
+
+      - name: Verify full Xcode toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          developer_dir="$(xcode-select -p)"
+          case "$developer_dir" in
+            */Xcode*.app/Contents/Developer) ;;
+            *)
+              echo "Expected a full Xcode toolchain, got: $developer_dir" >&2
+              exit 1
+              ;;
+          esac
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-path
+
+      - name: Install whisper framework dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_framework="$GITHUB_WORKSPACE/BuildDependencies/whisper.xcframework"
+          destination_framework="$HOME/VoiceInk-Dependencies/whisper.cpp/build-apple/whisper.xcframework"
+          test -d "$source_framework"
+          mkdir -p "$(dirname "$destination_framework")"
+          ditto "$source_framework" "$destination_framework"
+          test -f "$destination_framework/Info.plist"
+
+      - name: Build unsigned Release app
+        shell: bash
+        env:
+          DERIVED_DATA: ${{ runner.temp }}/VoiceInkDerivedData
+          SOURCE_PACKAGES: ${{ runner.temp }}/VoiceInkSourcePackages
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project VoiceInk.xcodeproj \
+            -scheme VoiceInk \
+            -configuration Release \
+            -derivedDataPath "$DERIVED_DATA" \
+            -clonedSourcePackagesDirPath "$SOURCE_PACKAGES" \
+            -xcconfig "$GITHUB_WORKSPACE/LocalBuild.xcconfig" \
+            -disableAutomaticPackageResolution \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM="" \
+            CODE_SIGN_ENTITLEMENTS="$GITHUB_WORKSPACE/VoiceInk/VoiceInk.local.entitlements" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            build
+
+          app_path="$DERIVED_DATA/Build/Products/Release/VoiceInk.app"
+          test -d "$app_path"
+          test -x "$app_path/Contents/MacOS/VoiceInk"
+          mkdir -p "$RUNNER_TEMP/package"
+          ditto -c -k --sequesterRsrc --keepParent "$app_path" "$RUNNER_TEMP/package/VoiceInk.app.zip"
+          test -f "$RUNNER_TEMP/package/VoiceInk.app.zip"
+
+      - name: Upload unsigned app
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoiceInk-macos-unsigned
+          path: ${{ runner.temp }}/package/VoiceInk.app.zip
+          if-no-files-found: error
+          retention-days: 1
