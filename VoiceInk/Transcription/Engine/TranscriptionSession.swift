@@ -120,10 +120,14 @@ final class StreamingTranscriptionSession: TranscriptionSession {
         if !streamingFailed {
             do {
                 let start = Date()
-                logger.notice("Streaming stop/transcribe started model=\(model.displayName, privacy: .public)")
-                let text = try await streamingService.stopAndGetFinalText()
-                logger.notice("Streaming transcript received elapsed=\(Date().timeIntervalSince(start), format: .fixed(precision: 3), privacy: .public)s chars=\(text.count, privacy: .public)")
-                return text
+                let result = try await streamingService.stopAndFinalize()
+                switch result {
+                case .finalized(let text):
+                    logger.notice("Streaming transcript received elapsed=\(Date().timeIntervalSince(start), format: .fixed(precision: 3), privacy: .public)s chars=\(text.count, privacy: .public)")
+                    return text
+                case .requiresBatchFallback:
+                    logger.notice("Streaming requested batch fallback")
+                }
             } catch {
                 logger.error("❌ Streaming failed, falling back to batch: \(error, privacy: .public)")
                 startupTask?.cancel()

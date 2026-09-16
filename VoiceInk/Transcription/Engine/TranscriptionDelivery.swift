@@ -12,7 +12,7 @@ final class TranscriptionDelivery {
         let responseConfig: EnhancementRuntimeConfiguration?
         let responseError: String?
         let isAssistantFollowUp: Bool
-        let destinationSnapshot: PasteDestinationSnapshot
+        let destinationSnapshot: PasteDestinationSnapshot?
     }
 
     struct Actions {
@@ -162,12 +162,13 @@ final class TranscriptionDelivery {
     private func paste(
         _ text: String,
         output: OutputRuntimeConfiguration,
-        destinationSnapshot: PasteDestinationSnapshot,
+        destinationSnapshot: PasteDestinationSnapshot?,
+        actions: Actions
     ) async {
         let textToPaste = deliverableText(from: text)
         let appendSpace = UserDefaults.standard.bool(forKey: "AppendTrailingSpace")
         let pastedText = textToPaste + (appendSpace ? " " : "")
-        guard destinationSnapshot.stillMatches() else {
+        guard let destinationSnapshot, destinationSnapshot.stillMatches() else {
             NotificationManager.shared.showTranscriptionReadyNotice()
             return
         }

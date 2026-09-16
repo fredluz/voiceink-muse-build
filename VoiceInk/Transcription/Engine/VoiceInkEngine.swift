@@ -662,6 +662,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 // dismiss; final hide is decided after removal below.
                 _ = session
             },
+            destinationSnapshot: session.destinationSnapshot,
             assistant: TranscriptionPipeline.AssistantHooks(
                 isFollowUp: session.useCase.isAssistantFollowUp,
                 sendFollowUp: { [weak self] text, transcription in
@@ -687,8 +688,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                     guard let self else { return }
                     self.assistantSession.fail(message)
                 }
-            ),
-            destinationSnapshot: session.destinationSnapshot
+            )
         )
 
         // Pipeline finished (delivered, failed, or canceled). Capture the result, release
