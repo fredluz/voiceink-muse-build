@@ -68,6 +68,7 @@ jobs:
             ONLY_ACTIVE_ARCH=YES \
             SWIFT_COMPILATION_MODE=singlefile \
             SWIFT_MAXIMUM_NUMBER_OF_THREADS=1 \
+            OTHER_SWIFT_FLAGS='$(inherited) -continue-building-after-errors' \
             -resultBundlePath "$RUNNER_TEMP/VoiceInk.xcresult" \
             build
 
