@@ -245,6 +245,7 @@ class CursorPaster {
 
     // MARK: - Auto Send Keys
 
+    @MainActor
     static func performAutoSend(_ key: AutoSendKey, destinationSnapshot: PasteDestinationSnapshot? = nil) {
         guard key.isEnabled else { return }
         guard let destinationSnapshot, destinationSnapshot.stillMatches() else { return }
