@@ -17,6 +17,15 @@ struct PasteDestinationSnapshot: Equatable {
     let window: ElementIdentity
     let element: ElementIdentity
     let selectedTextRange: CFRange
+    static func == (lhs: PasteDestinationSnapshot, rhs: PasteDestinationSnapshot) -> Bool {
+        lhs.processIdentifier == rhs.processIdentifier
+            && lhs.bundleIdentifier == rhs.bundleIdentifier
+            && lhs.window == rhs.window
+            && lhs.element == rhs.element
+            && lhs.selectedTextRange.location == rhs.selectedTextRange.location
+            && lhs.selectedTextRange.length == rhs.selectedTextRange.length
+    }
+
 
     @MainActor
     static func capture() -> PasteDestinationSnapshot? {
