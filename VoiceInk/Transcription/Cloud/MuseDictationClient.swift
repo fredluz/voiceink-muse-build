@@ -56,9 +56,10 @@ actor MuseDictationClient {
     private let socketFactory: @Sendable () throws -> any MuseSocket
     private let handshakeTimeoutNanoseconds: UInt64
     private let finishTimeoutNanoseconds: UInt64
+    private let sendTimeoutNanoseconds: UInt64
     private var socket: (any MuseSocket)?
     private var receiveTask: Task<Void, Never>?
-    private var latestTranscript = ""
+    private(set) var latestTranscript = ""
     private var terminalError: Error?
     private var receiveFailure: Error?
     private var receiveEnded = false
@@ -76,7 +77,8 @@ actor MuseDictationClient {
                 return URLSessionMuseSocket(session: session, task: task)
             },
             handshakeTimeoutNanoseconds: 15_000_000_000,
-            finishTimeoutNanoseconds: 15_000_000_000
+            finishTimeoutNanoseconds: 15_000_000_000,
+            sendTimeoutNanoseconds: 10_000_000_000
         )
     }
     /// Internal initializer keeps protocol/lifecycle tests independent of a real WebSocket.
@@ -85,13 +87,15 @@ actor MuseDictationClient {
         onPartial: (@Sendable (String) -> Void)? = nil,
         socketFactory: @escaping @Sendable () throws -> any MuseSocket,
         handshakeTimeoutNanoseconds: UInt64 = 15_000_000_000,
-        finishTimeoutNanoseconds: UInt64 = 15_000_000_000
+        finishTimeoutNanoseconds: UInt64 = 15_000_000_000,
+        sendTimeoutNanoseconds: UInt64 = 10_000_000_000
     ) {
         self.credential = credential
         self.onPartial = onPartial
         self.socketFactory = socketFactory
         self.handshakeTimeoutNanoseconds = handshakeTimeoutNanoseconds
         self.finishTimeoutNanoseconds = finishTimeoutNanoseconds
+        self.sendTimeoutNanoseconds = sendTimeoutNanoseconds
     }
 
     deinit {
@@ -167,11 +171,8 @@ actor MuseDictationClient {
         guard terminalError == nil, !receiveEnded else {
             throw terminalError ?? MuseDictationError.connectionFailed("The server closed the connection.")
         }
-        do {
-            try await socket.send(.data(data))
-        } catch {
-            throw Self.connectionError(error)
-        }
+        // Bounded wait: a silently dead socket must not suspend the paced sender forever.
+        try await sendMessage(.data(data), on: socket, timeoutNanoseconds: sendTimeoutNanoseconds)
     }
     /// Sends the exact end marker and accepts either an explicit final transcript or Muse's
     /// latest transcript on a known clean EOF.
@@ -182,8 +183,18 @@ actor MuseDictationClient {
         guard !didSendEndStream else {
             throw MuseDictationError.notConnected
         }
-        guard terminalError == nil, !receiveEnded else {
-            throw terminalError ?? MuseDictationError.connectionFailed("The server closed before endStream.")
+        if let terminalError {
+            await cancel()
+            throw terminalError
+        }
+        if receiveEnded {
+            // A mid-stream server close still delivers the transcript it already sent;
+            // only a close with no usable text is a connection failure.
+            await cancel()
+            guard !latestTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw MuseDictationError.connectionFailed("The server closed before endStream.")
+            }
+            return latestTranscript
         }
 
         let timeoutState = MuseTimeoutState()
@@ -267,6 +278,40 @@ actor MuseDictationClient {
         }
         finalContinuation.finish()
         finalSignal = nil
+    }
+
+    /// Sends one message with a bounded wait. The timeout cancels the socket so a
+    /// suspended send unblocks instead of hanging on a dead connection.
+    private func sendMessage(
+        _ message: URLSessionWebSocketTask.Message,
+        on socket: any MuseSocket,
+        timeoutNanoseconds: UInt64
+    ) async throws {
+        let timeoutState = MuseTimeoutState()
+        do {
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    try await socket.send(message)
+                }
+                group.addTask {
+                    do {
+                        try await Task.sleep(nanoseconds: timeoutNanoseconds)
+                    } catch {
+                        throw CancellationError()
+                    }
+                    timeoutState.markTimedOut()
+                    socket.cancel()
+                    throw MuseDictationError.connectionFailed("Send timed out.")
+                }
+                defer { group.cancelAll() }
+                try await group.next()!
+            }
+        } catch {
+            if timeoutState.didTimeOut {
+                throw MuseDictationError.connectionFailed("Send timed out.")
+            }
+            throw Self.connectionError(error)
+        }
     }
 
     func cancel() async {

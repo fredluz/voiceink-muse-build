@@ -48,6 +48,7 @@ final class MuseStreamingProvider: StreamingTranscriptionProvider {
 
     private func startPacedSender(for client: MuseDictationClient) {
         let buffer = MuseFrameBuffer(frameSize: Self.frameSize)
+        let continuation = eventsContinuation
         frameBuffer = buffer
         sendTask = Task {
             while let frame = await buffer.nextFrame() {
@@ -55,14 +56,20 @@ final class MuseStreamingProvider: StreamingTranscriptionProvider {
                     try await client.sendAudio(frame)
                 } catch {
                     await buffer.fail(error)
+                    // Surface the failure so the session card stops looking live; the
+                    // service logs .error events without changing state.
+                    continuation?.yield(.error(Self.mapError(error)))
                     return
                 }
                 // Pace to the wire cadence; a burst of small frames is what trips
-                // the server's "Audio processing backlog too large".
-                do {
-                    try await Task.sleep(nanoseconds: Self.frameIntervalNanoseconds)
-                } catch {
-                    return
+                // the server's "Audio processing backlog too large". Once the buffer
+                // is finished the backlog drains unpaced so commit() is not delayed.
+                if await !buffer.isFinished {
+                    do {
+                        try await Task.sleep(nanoseconds: Self.frameIntervalNanoseconds)
+                    } catch {
+                        return
+                    }
                 }
             }
         }
@@ -92,6 +99,13 @@ final class MuseStreamingProvider: StreamingTranscriptionProvider {
             if let sendError = await frameBuffer.failure {
                 let mapped = Self.mapError(sendError)
                 eventsContinuation?.yield(.error(mapped))
+                // Deliver whatever transcript arrived before the send path failed
+                // instead of discarding it into the slow batch fallback.
+                let partial = await client.latestTranscript
+                if !partial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    eventsContinuation?.yield(.committed(text: partial))
+                    return
+                }
                 throw mapped
             }
         }
@@ -101,6 +115,13 @@ final class MuseStreamingProvider: StreamingTranscriptionProvider {
             eventsContinuation?.yield(.committed(text: text))
         } catch {
             let mapped = Self.mapError(error)
+            // A mid-stream close or finish failure still delivers the partial
+            // transcript when one was received; only an empty transcript throws.
+            let partial = await client.latestTranscript
+            if !partial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                eventsContinuation?.yield(.committed(text: partial))
+                return
+            }
             // The shared service observes error events for logging; throwing here also makes
             // stopAndFinalize fail instead of treating a partial transcript as success.
             eventsContinuation?.yield(.error(mapped))
@@ -151,8 +172,11 @@ final class MuseStreamingProvider: StreamingTranscriptionProvider {
 /// until a full frame is ready; on finish() a trailing partial frame is delivered once.
 private actor MuseFrameBuffer {
     private let frameSize: Int
+    /// Once finished, frames drain in larger chunks: raw PCM is a byte stream, so
+    /// message boundaries do not matter and the backlog leaves in a few sends.
+    private let drainSize = 65_536
     private var pending = Data()
-    private var isFinished = false
+    private(set) var isFinished = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
     private(set) var failure: Error?
 
@@ -187,7 +211,7 @@ private actor MuseFrameBuffer {
             if failure != nil { return nil }
 
             if pending.count >= frameSize {
-                return takeFrame()
+                return takeFrame(isFinished ? drainSize : frameSize)
             }
 
             if isFinished {
@@ -201,9 +225,10 @@ private actor MuseFrameBuffer {
         }
     }
 
-    private func takeFrame() -> Data {
-        let frame = pending.prefix(frameSize)
-        pending.removeFirst(frameSize)
+    private func takeFrame(_ size: Int) -> Data {
+        let count = min(size, pending.count)
+        let frame = pending.prefix(count)
+        pending.removeFirst(count)
         return Data(frame)
     }
 

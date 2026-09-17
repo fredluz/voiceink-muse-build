@@ -56,7 +56,10 @@ class CursorPaster {
         destinationSnapshot: PasteDestinationSnapshot?
     ) async -> PasteResult {
         guard let destinationSnapshot, destinationSnapshot.stillMatches() else {
-            logger.notice("Paste destination changed or is unavailable; paste skipped")
+            // No valid paste target — leave the transcript on the clipboard so the
+            // user can paste it manually instead of losing it to a menu-bar notice.
+            ClipboardManager.setClipboard(text)
+            logger.notice("Paste destination changed or is unavailable; transcript left on clipboard")
             return .commandNotPosted
         }
 
@@ -76,15 +79,9 @@ class CursorPaster {
 
         await wait(prePasteDelay)
         guard destinationSnapshot.stillMatches() else {
-            if shouldRestoreClipboard {
-                scheduleClipboardRestore(
-                    savedContents,
-                    expectedText: text,
-                    sessionID: sessionID,
-                    on: pasteboard
-                )
-            }
-            logger.notice("Paste destination changed before paste; paste skipped")
+            // Destination vanished mid-paste — the transcript is already on the
+            // clipboard; keep it there (skip the restore) so the user can paste.
+            logger.notice("Paste destination changed before paste; transcript left on clipboard")
             return .commandNotPosted
         }
 

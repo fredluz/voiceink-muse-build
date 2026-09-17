@@ -56,6 +56,7 @@ final class StreamingTranscriptionSession: TranscriptionSession {
     private var context: TranscriptionRequestContext = .currentDefaults
     private var streamingFailed = false
     private var startupTask: Task<Void, Never>?
+    private var canceled = false
     private var startupTaskID: UUID?
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "StreamingTranscriptionSession")
 
@@ -70,6 +71,7 @@ final class StreamingTranscriptionSession: TranscriptionSession {
 
         self.model = model
         self.context = context
+        canceled = false
         logger.notice("Streaming session prepare model=\(model.displayName, privacy: .public)")
 
         // Return callback immediately; WebSocket connects in background
@@ -142,6 +144,9 @@ final class StreamingTranscriptionSession: TranscriptionSession {
             streamingService.cancel()
         }
 
+        // A canceled session must not re-upload the file for batch transcription.
+        guard !canceled else { throw CancellationError() }
+
         let fallbackStart = Date()
         logger.notice("Using batch fallback for \(model.displayName, privacy: .public) file=\(audioURL.lastPathComponent, privacy: .public)")
         let text = try await fallbackService.transcribe(audioURL: audioURL, model: model, context: context)
@@ -150,6 +155,7 @@ final class StreamingTranscriptionSession: TranscriptionSession {
     }
 
     func cancel() {
+        canceled = true
         startupTask?.cancel()
         startupTask = nil
         startupTaskID = nil
