@@ -364,6 +364,7 @@ final class RecordingShortcutModeHandler {
         isRecorderVisible: @escaping @MainActor () -> Bool,
         recordingState: @escaping @MainActor () -> RecordingState,
         toggleRecorderPanel: @escaping @MainActor (UUID?, Bool) async -> Void,
+        cancelRecording: @escaping @MainActor () async -> Void
     ) {
         self.canHandleShortcutAction = canHandleShortcutAction
         self.isRecorderVisible = isRecorderVisible
@@ -419,7 +420,7 @@ final class RecordingShortcutModeHandler {
             // Only start when nothing is recording; a visible panel showing
             // in-flight sessions must not block a new stacked recording.
             guard canHandleShortcutAction(), recordingState() == .idle else { return }
-            await toggleRecorderPanel(modeId)
+            await toggleRecorderPanel(modeId, stacking)
         }
     }
 
