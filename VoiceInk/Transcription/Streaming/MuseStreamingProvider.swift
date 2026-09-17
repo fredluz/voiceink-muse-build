@@ -17,6 +17,14 @@ final class MuseStreamingProvider: StreamingTranscriptionProvider {
     private var frameBuffer: MuseFrameBuffer?
     private var sendTask: Task<Void, Never>?
 
+    /// Retained for session rotation: the server closes long sessions
+    /// ("Max session duration reached", close 1011), so the paced sender opens a
+    /// fresh session mid-recording and keeps streaming the same buffer.
+    private var credential: String?
+    /// Transcript text already committed by earlier sessions in this recording;
+    /// prepended to partials and the final commit so nothing is lost on rotation.
+    private let transcriptPrefix = TranscriptPrefix()
+
     init() {
         var continuation: AsyncStream<StreamingTranscriptionEvent>.Continuation!
         transcriptionEvents = AsyncStream { continuation = $0 }
@@ -31,33 +39,47 @@ final class MuseStreamingProvider: StreamingTranscriptionProvider {
         guard client == nil else { return }
 
         let credential = try MuseLoginCredentials.load()
+        self.credential = credential
 
-        let continuation = eventsContinuation
-        let newClient = MuseDictationClient(credential: credential) { text in
-            continuation?.yield(.partial(text: text))
-        }
+        let newClient = makeClient(credential: credential)
         do {
             try await newClient.connect()
         } catch {
             throw Self.mapError(error)
         }
         client = newClient
-        startPacedSender(for: newClient)
-        continuation?.yield(.sessionStarted)
+        startPacedSender()
+        eventsContinuation?.yield(.sessionStarted)
     }
 
-    private func startPacedSender(for client: MuseDictationClient) {
+    /// Builds a client whose partials carry the already-committed prefix so the
+    /// card keeps showing the full transcript across session rotations.
+    private func makeClient(credential: String) -> MuseDictationClient {
+        let continuation = eventsContinuation
+        let prefix = transcriptPrefix
+        return MuseDictationClient(credential: credential) { text in
+            continuation?.yield(.partial(text: prefix.value + text))
+        }
+    }
+
+    private func startPacedSender() {
         let buffer = MuseFrameBuffer(frameSize: Self.frameSize)
         let continuation = eventsContinuation
         frameBuffer = buffer
-        sendTask = Task {
+        sendTask = Task { [weak self] in
             while let frame = await buffer.nextFrame() {
+                guard let self, let client = self.client else { return }
                 do {
                     try await client.sendAudio(frame)
                 } catch {
+                    // Server closed mid-recording (e.g. "Max session duration
+                    // reached"): rotate to a fresh session and keep streaming
+                    // the same buffer. Only while still recording — once the
+                    // buffer is finished, commit() handles the failure.
+                    if await !buffer.isFinished, await self.rotateSession() {
+                        continue
+                    }
                     await buffer.fail(error)
-                    // Surface the failure so the session card stops looking live; the
-                    // service logs .error events without changing state.
                     continuation?.yield(.error(Self.mapError(error)))
                     return
                 }
@@ -75,6 +97,29 @@ final class MuseStreamingProvider: StreamingTranscriptionProvider {
         }
     }
 
+    /// Opens a fresh Muse session after the server closed the current one,
+    /// carrying the received transcript forward as a prefix. Returns false when
+    /// rotation is impossible (no credential, connect failure).
+    private func rotateSession() async -> Bool {
+        guard let credential else { return false }
+
+        if let old = client {
+            transcriptPrefix.append(await old.latestTranscript)
+            await old.cancel()
+        }
+
+        let newClient = makeClient(credential: credential)
+        do {
+            try await newClient.connect()
+        } catch {
+            return false
+        }
+        client = newClient
+        return true
+    }
+
+
+
     func sendAudioChunk(_ data: Data) async throws {
         guard client != nil, let frameBuffer else {
             throw StreamingTranscriptionError.notConnected
@@ -89,7 +134,7 @@ final class MuseStreamingProvider: StreamingTranscriptionProvider {
     }
 
     func commit() async throws {
-        guard let client else { throw StreamingTranscriptionError.notConnected }
+        guard client != nil else { throw StreamingTranscriptionError.notConnected }
 
         // Flush remaining partial frame, wait for the paced sender to drain, then
         // surface any send failure before asking the client for the transcript.
@@ -101,7 +146,7 @@ final class MuseStreamingProvider: StreamingTranscriptionProvider {
                 eventsContinuation?.yield(.error(mapped))
                 // Deliver whatever transcript arrived before the send path failed
                 // instead of discarding it into the slow batch fallback.
-                let partial = await client.latestTranscript
+                let partial = transcriptPrefix.value + (await client?.latestTranscript ?? "")
                 if !partial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     eventsContinuation?.yield(.committed(text: partial))
                     return
@@ -110,14 +155,19 @@ final class MuseStreamingProvider: StreamingTranscriptionProvider {
             }
         }
 
+        // Re-read the client after the drain: a session rotation during the drain
+        // swaps it, and the rotated-out client's transcript already moved into
+        // transcriptPrefix.
+        guard let client else { throw StreamingTranscriptionError.notConnected }
+
         do {
             let text = try await client.finish()
-            eventsContinuation?.yield(.committed(text: text))
+            eventsContinuation?.yield(.committed(text: transcriptPrefix.value + text))
         } catch {
             let mapped = Self.mapError(error)
             // A mid-stream close or finish failure still delivers the partial
             // transcript when one was received; only an empty transcript throws.
-            let partial = await client.latestTranscript
+            let partial = transcriptPrefix.value + (await client.latestTranscript)
             if !partial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 eventsContinuation?.yield(.committed(text: partial))
                 return
@@ -238,5 +288,27 @@ private actor MuseFrameBuffer {
         for waiter in current {
             waiter.resume()
         }
+    }
+}
+
+/// Lock-guarded transcript prefix shared between the provider, the paced send
+/// task, and each client's onPartial callback (all different isolation domains).
+private final class TranscriptPrefix: @unchecked Sendable {
+    private let lock = NSLock()
+    private var text = ""
+
+    var value: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return text
+    }
+
+    /// Appends a rotated-out session's transcript, separated by a space.
+    func append(_ transcript: String) {
+        let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        text = text.isEmpty ? trimmed : text + " " + trimmed
     }
 }
