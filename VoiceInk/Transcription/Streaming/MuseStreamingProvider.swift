@@ -17,6 +17,12 @@ final class MuseStreamingProvider: StreamingTranscriptionProvider {
     private var frameBuffer: MuseFrameBuffer?
     private var sendTask: Task<Void, Never>?
 
+    init() {
+        var continuation: AsyncStream<StreamingTranscriptionEvent>.Continuation!
+        transcriptionEvents = AsyncStream { continuation = $0 }
+        eventsContinuation = continuation
+    }
+
     deinit {
         eventsContinuation?.finish()
     }

@@ -12,6 +12,8 @@ final class TranscriptionDelivery {
         let responseConfig: EnhancementRuntimeConfiguration?
         let responseError: String?
         let isAssistantFollowUp: Bool
+        /// Stacked clips transcribe into TranscriptStack instead of pasting.
+        let isStackedClip: Bool
         let destinationSnapshot: PasteDestinationSnapshot?
     }
 
@@ -25,6 +27,17 @@ final class TranscriptionDelivery {
 
     func deliver(_ request: Request, actions: Actions) async {
         guard request.transcription.transcriptionStatus == TranscriptionStatus.completed.rawValue else {
+            await actions.dismiss()
+            return
+        }
+
+        if request.isStackedClip {
+            SoundManager.shared.playStopSound()
+            if let text = request.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !text.isEmpty
+            {
+                TranscriptStack.shared.push(text)
+            }
             await actions.dismiss()
             return
         }
@@ -203,5 +216,30 @@ final class TranscriptionDelivery {
         }
 
         return textToDeliver
+    }
+}
+
+/// Holds transcripts captured via the stack shortcut (secondaryRecording) until the
+/// primary shortcut flushes them as one paste. Clips keep recording order.
+@MainActor
+final class TranscriptStack: ObservableObject {
+    static let shared = TranscriptStack()
+
+    @Published private(set) var clips: [String] = []
+
+    var hasClips: Bool { !clips.isEmpty }
+
+    func push(_ text: String) {
+        clips.append(text)
+    }
+
+    /// Pastes every stacked clip as one block at the CURRENT frontmost app, then clears.
+    /// The snapshot is captured at flush time — the user has moved to wherever they want
+    /// the combined text by the time they press the primary shortcut.
+    func flush() async {
+        guard !clips.isEmpty else { return }
+        let combined = clips.joined(separator: "\n\n")
+        clips = []
+        _ = await CursorPaster.pasteAtCursorAndWaitUntilPosted(combined)
     }
 }

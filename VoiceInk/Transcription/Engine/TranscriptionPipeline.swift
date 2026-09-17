@@ -63,6 +63,7 @@ class TranscriptionPipeline {
         onCancel: @escaping () async -> Void,
         onDismiss: @escaping () async -> Void,
         destinationSnapshot: PasteDestinationSnapshot?,
+        isStackedClip: Bool = false,
         assistant: AssistantHooks = .inactive
     ) async {
         let model = transcriptionConfiguration.model
@@ -214,6 +215,7 @@ class TranscriptionPipeline {
                 responseConfig: responseConfig,
                 responseError: responseError,
                 isAssistantFollowUp: assistant.isFollowUp,
+                isStackedClip: isStackedClip,
                 destinationSnapshot: destinationSnapshot
             ),
             actions: TranscriptionDelivery.Actions(

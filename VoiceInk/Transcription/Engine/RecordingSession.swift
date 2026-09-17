@@ -122,8 +122,12 @@ final class RecordingSession: ObservableObject, Identifiable, RecorderStateProvi
     enum UseCase: Equatable {
         case newSession
         case assistantFollowUp
+        /// Started via the secondary (stack) shortcut: transcribe and hold the
+        /// result in TranscriptStack instead of pasting immediately.
+        case stackedClip
 
         var isAssistantFollowUp: Bool { self == .assistantFollowUp }
+        var isStackedClip: Bool { self == .stackedClip }
     }
     var useCase: UseCase
 

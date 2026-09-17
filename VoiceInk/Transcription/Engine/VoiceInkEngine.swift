@@ -285,7 +285,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
     //     started session (re-press during the brief start window).
     //   • Otherwise (idle OR only background transcriptions running) → START a fresh
     //     active session.
-    func toggleRecord(modeId: UUID? = nil, isAssistantFollowUp: Bool = false) async {
+    func toggleRecord(modeId: UUID? = nil, isAssistantFollowUp: Bool = false, stacking: Bool = false) async {
         // Mid-start re-press: the active session is still starting → cancel it.
         if let active = activeRecordingSession, active.liveRecordingState == .starting {
             await cancelSession(active)
@@ -352,8 +352,11 @@ class VoiceInkEngine: NSObject, ObservableObject {
             // but assert it anyway.
             assert(activeRecordingSession == nil, "one-active-recording invariant violated")
 
-            let canContinueAssistantSession = isAssistantFollowUp && assistantSession.canSendFollowUp
-            let useCase: RecordingSession.UseCase = canContinueAssistantSession ? .assistantFollowUp : .newSession
+            let canContinueAssistantSession = isAssistantFollowUp && !stacking && assistantSession.canSendFollowUp
+            let useCase: RecordingSession.UseCase =
+                canContinueAssistantSession
+                ? .assistantFollowUp
+                : (stacking ? .stackedClip : .newSession)
 
             if !useCase.isAssistantFollowUp {
                 assistantSession.reset()
@@ -663,6 +666,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 _ = session
             },
             destinationSnapshot: session.destinationSnapshot,
+            isStackedClip: session.useCase.isStackedClip,
             assistant: TranscriptionPipeline.AssistantHooks(
                 isFollowUp: session.useCase.isAssistantFollowUp,
                 sendFollowUp: { [weak self] text, transcription in

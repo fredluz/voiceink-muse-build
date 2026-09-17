@@ -122,8 +122,8 @@ class RecordingShortcutManager: ObservableObject {
             recordingState: {
                 engine.recordingState
             },
-            toggleRecorderPanel: { modeId in
-                await recorderUIManager.toggleRecorderPanel(modeId: modeId)
+            toggleRecorderPanel: { modeId, stacking in
+                await recorderUIManager.toggleRecorderPanel(modeId: modeId, stacking: stacking)
             },
             cancelRecording: {
                 await recorderUIManager.cancelRecording()
@@ -230,7 +230,8 @@ class RecordingShortcutManager: ObservableObject {
                     await self.shortcutModeHandler.handleKeyDown(
                         action: action,
                         eventTime: eventTime,
-                        mode: mode
+                        mode: mode,
+                        stacking: action == .secondaryRecording
                     )
                 }
             },
@@ -345,7 +346,7 @@ final class RecordingShortcutModeHandler {
     private let canHandleShortcutAction: @MainActor () -> Bool
     private let isRecorderVisible: @MainActor () -> Bool
     private let recordingState: @MainActor () -> RecordingState
-    private let toggleRecorderPanel: @MainActor (UUID?) async -> Void
+    private let toggleRecorderPanel: @MainActor (UUID?, Bool) async -> Void
     private let cancelRecording: @MainActor () async -> Void
 
     private var shortcutPressStartTime: TimeInterval?
@@ -362,8 +363,7 @@ final class RecordingShortcutModeHandler {
         canHandleShortcutAction: @escaping @MainActor () -> Bool,
         isRecorderVisible: @escaping @MainActor () -> Bool,
         recordingState: @escaping @MainActor () -> RecordingState,
-        toggleRecorderPanel: @escaping @MainActor (UUID?) async -> Void,
-        cancelRecording: @escaping @MainActor () async -> Void
+        toggleRecorderPanel: @escaping @MainActor (UUID?, Bool) async -> Void,
     ) {
         self.canHandleShortcutAction = canHandleShortcutAction
         self.isRecorderVisible = isRecorderVisible
@@ -385,7 +385,8 @@ final class RecordingShortcutModeHandler {
         action: ShortcutAction,
         eventTime: TimeInterval,
         mode: RecordingShortcutManager.Mode,
-        modeId: UUID? = nil
+        modeId: UUID? = nil,
+        stacking: Bool = false
     ) async {
         if interruptedRecordingActions.remove(action) != nil {
             return
@@ -412,8 +413,7 @@ final class RecordingShortcutModeHandler {
             // engine's derived recordingState, so a press while a background
             // transcription card is still visible starts a NEW stacked session
             // instead of being swallowed by an isRecorderVisible() gate.
-            guard canHandleShortcutAction() else { return }
-            await toggleRecorderPanel(modeId)
+            await toggleRecorderPanel(modeId, stacking)
 
         case .pushToTalk:
             // Only start when nothing is recording; a visible panel showing
@@ -443,14 +443,14 @@ final class RecordingShortcutModeHandler {
             // showing in-flight transcriptions must not trigger a new start.
             if recordingState() == .recording {
                 guard canHandleShortcutAction() else { return }
-                await toggleRecorderPanel(modeId)
+                await toggleRecorderPanel(modeId, false)
             }
 
         case .hybrid:
             let pressDuration = shortcutPressStartTime.map { eventTime - $0 } ?? 0
             if pressDuration >= hybridPressThreshold && recordingState() == .recording {
                 guard canHandleShortcutAction() else { return }
-                await toggleRecorderPanel(modeId)
+                await toggleRecorderPanel(modeId, false)
             }
         }
 

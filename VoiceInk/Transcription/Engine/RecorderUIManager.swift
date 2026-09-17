@@ -188,13 +188,13 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
 
     // MARK: - Recorder Panel Management
 
-    func toggleRecorderPanel(modeId: UUID? = nil) async {
+    func toggleRecorderPanel(modeId: UUID? = nil, stacking: Bool = false) async {
         guard let engine = engine else { return }
 
         if isRecorderPanelVisible {
             switch engine.recordingState {
             case .recording:
-                await engine.toggleRecord(modeId: modeId)
+                await engine.toggleRecord(modeId: modeId, stacking: stacking)
             case .starting:
                 // Pre-recording: a re-press here genuinely cancels a not-yet-started
                 // session, so cancelling is correct.
@@ -230,7 +230,7 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
                 //   ignoring — record-while-transcribing is desired and now race-free.
                 // ═══════════════════════════════════════════════════════════════
                 SoundManager.shared.playStartSound()
-                await engine.toggleRecord(modeId: modeId)
+                await engine.toggleRecord(modeId: modeId, stacking: stacking)
             case .idle:
                 // .idle now also covers "a previous session is transcribing in the
                 // background but none is actively recording" (derived state falls back to
@@ -238,7 +238,12 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
                 // sessions OR the user is starting fresh, a toggle here STARTS a new
                 // recording — UNLESS the assistant is awaiting a follow-up, which takes
                 // precedence as before.
-                if engine.assistantSession.canSendFollowUp {
+                if !stacking && TranscriptStack.shared.hasClips {
+                    // Primary press with a non-empty stack = "done": paste every
+                    // stacked clip as one block at the current frontmost app.
+                    SoundManager.shared.playStopSound()
+                    await TranscriptStack.shared.flush()
+                } else if engine.assistantSession.canSendFollowUp {
                     SoundManager.shared.playStartSound()
                     await engine.toggleRecord(
                         modeId: modeId,
@@ -247,7 +252,7 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
                 } else if !engine.sessions.isEmpty {
                     // Background transcription(s) in flight → start ANOTHER recording.
                     SoundManager.shared.playStartSound()
-                    await engine.toggleRecord(modeId: modeId)
+                    await engine.toggleRecord(modeId: modeId, stacking: stacking)
                 } else {
                     await dismissRecorderPanel()
                 }
@@ -255,9 +260,16 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
                 await dismissRecorderPanel()
             }
         } else {
+            if !stacking && TranscriptStack.shared.hasClips {
+                // Primary press with a non-empty stack = "done": paste every
+                // stacked clip as one block at the current frontmost app.
+                SoundManager.shared.playStopSound()
+                await TranscriptStack.shared.flush()
+                return
+            }
             SoundManager.shared.playStartSound()
             isRecorderPanelVisible = true
-            await engine.toggleRecord(modeId: modeId)
+            await engine.toggleRecord(modeId: modeId, stacking: stacking)
         }
     }
 
