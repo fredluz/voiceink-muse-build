@@ -32,7 +32,11 @@ struct OnboardingView: View {
                             NSApplication.shared.terminate(nil)
                         },
                         onRecheck: coordinator.permissions.refreshPermissionStatuses,
-                        onContinue: coordinator.flow.goToMicrophoneStep
+                        onContinue: {
+                            coordinator.flow.skipOnboarding {
+                                hasCompletedOnboardingV2 = true
+                            }
+                        }
                     )
                     .transition(.opacity)
                 case .microphone:
@@ -208,6 +212,9 @@ struct OnboardingView: View {
             coordinator.flow.refreshAPIVerification()
             coordinator.flow.refreshExperienceModeState(enhancementService: enhancementService)
             let refreshedTranscriptionSetupReady = coordinator.isTranscriptionSetupReady()
+            if coordinator.stage != .permissions {
+                coordinator.flow.goToPermissionsStep()
+            }
             coordinator.flow.reconcileStage(
                 isTranscriptionSetupReady: refreshedTranscriptionSetupReady,
                 enhancementService: enhancementService

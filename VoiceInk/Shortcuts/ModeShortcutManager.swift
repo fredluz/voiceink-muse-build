@@ -58,6 +58,12 @@ class ModeShortcutManager {
     }
 
     private func refreshModeShortcuts() {
+        // This monitor only tracks .mode actions, so its stop() cannot deliver
+        // keyUp for a held recording shortcut. The handler is shared with
+        // RecordingShortcutManager — reset it so a refresh mid-press can't
+        // leave isShortcutPressed stuck and swallow every later keyDown.
+        shortcutModeHandler.reset()
+
         let shortcuts = ModeManager.shared.enabledConfigurations.reduce(into: [ShortcutAction: Shortcut]()) {
             result, config in
             let action = ShortcutAction.mode(config.id)

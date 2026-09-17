@@ -59,6 +59,15 @@ final class ShortcutMonitor {
     }
 
     func stop() {
+        // Capture pressed shortcuts + handler before teardown: a refresh that
+        // stops the monitor mid-press must still deliver keyUp, otherwise the
+        // downstream handler's isShortcutPressed stays true forever and every
+        // later keyDown is swallowed.
+        let pressedActions = shortcuts.compactMap { action, state in
+            state.isDown ? action : nil
+        }
+        let keyUpHandler = onKeyUp
+
         if let eventTapRunLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), eventTapRunLoopSource, .commonModes)
             self.eventTapRunLoopSource = nil
@@ -74,6 +83,15 @@ final class ShortcutMonitor {
         onKeyDown = nil
         onKeyUp = nil
         onShortcutInterrupted = nil
+
+        if !pressedActions.isEmpty {
+            let eventTime = ProcessInfo.processInfo.systemUptime
+            DispatchQueue.main.async {
+                for action in pressedActions {
+                    keyUpHandler?(action, eventTime)
+                }
+            }
+        }
     }
 
     private func installEventTap() -> Bool {

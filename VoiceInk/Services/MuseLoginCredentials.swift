@@ -8,6 +8,8 @@ import Security
 enum MuseLoginCredentials {
     private static let keychainService = "ai.meta.dev.credentials"
     private static let keychainAccount = "meta"
+    private static let cacheLock = NSLock()
+    private static var cachedCredential: String?
 
     /// Errors returned while locating or decoding the native Muse login.
     enum CredentialError: Error, LocalizedError, Equatable {
@@ -45,8 +47,17 @@ enum MuseLoginCredentials {
 
     /// Loads Muse's login-issued `api_key` on an explicit user action.
     static func load() throws -> String {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+
+        if let cachedCredential = cachedCredential {
+            return cachedCredential
+        }
+
         let data = try readKeychainPayload()
-        return try credential(from: data)
+        let loadedCredential = try credential(from: data)
+        cachedCredential = loadedCredential
+        return loadedCredential
     }
 
     /// Extracts only Muse's login-issued `api_key`; `access_token` is never accepted.

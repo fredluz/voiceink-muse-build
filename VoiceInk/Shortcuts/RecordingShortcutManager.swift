@@ -349,7 +349,6 @@ final class RecordingShortcutModeHandler {
     private let cancelRecording: @MainActor () async -> Void
 
     private var shortcutPressStartTime: TimeInterval?
-    private var isHandsFreeRecording = false
     private var isShortcutPressed = false
     private var activeRecordingShortcutAction: ShortcutAction?
     private var interruptedRecordingActions = Set<ShortcutAction>()
@@ -376,7 +375,7 @@ final class RecordingShortcutModeHandler {
     func reset() {
         isShortcutPressed = false
         shortcutPressStartTime = nil
-        isHandsFreeRecording = false
+
         activeRecordingShortcutAction = nil
         interruptedRecordingActions.removeAll()
         activeShortcutCanCancelAccidentalStart = false
@@ -409,23 +408,18 @@ final class RecordingShortcutModeHandler {
 
         switch mode {
         case .toggle, .hybrid:
-            if isHandsFreeRecording {
-                isHandsFreeRecording = false
-                guard canHandleShortcutAction() else { return }
-                await toggleRecorderPanel(modeId)
-                return
-            }
-
-            if !isRecorderVisible() {
-                guard canHandleShortcutAction() else { return }
-                await toggleRecorderPanel(modeId)
-            }
+            // Route every press through toggleRecorderPanel: it switches on the
+            // engine's derived recordingState, so a press while a background
+            // transcription card is still visible starts a NEW stacked session
+            // instead of being swallowed by an isRecorderVisible() gate.
+            guard canHandleShortcutAction() else { return }
+            await toggleRecorderPanel(modeId)
 
         case .pushToTalk:
-            if !isRecorderVisible() {
-                guard canHandleShortcutAction() else { return }
-                await toggleRecorderPanel(modeId)
-            }
+            // Only start when nothing is recording; a visible panel showing
+            // in-flight sessions must not block a new stacked recording.
+            guard canHandleShortcutAction(), recordingState() == .idle else { return }
+            await toggleRecorderPanel(modeId)
         }
     }
 
@@ -442,10 +436,12 @@ final class RecordingShortcutModeHandler {
 
         switch mode {
         case .toggle:
-            isHandsFreeRecording = true
+            break
 
         case .pushToTalk:
-            if isRecorderVisible() {
+            // Release stops only an actually-recording session; a visible panel
+            // showing in-flight transcriptions must not trigger a new start.
+            if recordingState() == .recording {
                 guard canHandleShortcutAction() else { return }
                 await toggleRecorderPanel(modeId)
             }
@@ -455,8 +451,6 @@ final class RecordingShortcutModeHandler {
             if pressDuration >= hybridPressThreshold && recordingState() == .recording {
                 guard canHandleShortcutAction() else { return }
                 await toggleRecorderPanel(modeId)
-            } else {
-                isHandsFreeRecording = true
             }
         }
 
